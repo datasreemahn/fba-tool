@@ -31,36 +31,46 @@ const SectionLabel = ({ children }) => (
 );
 const SyncBadge = ({ syncing }) => (
   <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-    <div style={{ width: 7, height: 7, borderRadius: "50%", background: syncing ? T.yellow : T.green }} />
+    <div style={{ width: 7, height: 7, borderRadius: "50%", background: syncing ? T.yellow : T.green, transition: "background 0.3s" }} />
     <span style={{ fontSize: 10, color: T.muted, fontFamily: T.mono }}>{syncing ? "Saving..." : "Synced"}</span>
+  </div>
+);
+const LoadingSpinner = () => (
+  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: 60, gap: 10 }}>
+    <div style={{ width: 20, height: 20, border: `2px solid ${T.border}`, borderTop: `2px solid ${T.accent}`, borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+    <span style={{ fontSize: 13, color: T.muted, fontFamily: T.mono }}>Syncing with Firebase...</span>
+    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
   </div>
 );
 
 // ── Firebase hooks ──────────────────────────────────────────────────────────
-function useCollection(col) {
+function useCollection(name) {
   const [data, setData] = useState([]);
-  const [syncing, setSyncing] = useState(false);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    return onSnapshot(collection(db, col), snap => setData(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-  }, [col]);
-  const add = async (item) => { setSyncing(true); const id = uid(); await setDoc(doc(db, col, id), { ...item, id, createdAt: Date.now() }); setSyncing(false); };
-  const update = async (id, u) => { setSyncing(true); await updateDoc(doc(db, col, id), u); setSyncing(false); };
-  const remove = async (id) => { setSyncing(true); await deleteDoc(doc(db, col, id)); setSyncing(false); };
-  return { data, syncing, add, update, remove };
+    const unsub = onSnapshot(collection(db, name), snap => {
+      setData(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setLoading(false);
+    });
+    return unsub;
+  }, [name]);
+  return { data, loading };
 }
 
-function useDocument(path, def) {
-  const [data, setData] = useState(def);
-  const [syncing, setSyncing] = useState(false);
+function useDocument(col, id) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
   useEffect(() => {
-    const [c, i] = path.split("/");
-    return onSnapshot(doc(db, c, i), snap => { if (snap.exists()) setData(snap.data()); });
-  }, [path]);
-  const save = async (updates) => { setSyncing(true); const [c, i] = path.split("/"); await setDoc(doc(db, c, i), updates, { merge: true }); setSyncing(false); };
-  return { data, syncing, save };
+    const unsub = onSnapshot(doc(db, col, id), snap => {
+      setData(snap.exists() ? snap.data() : null);
+      setLoading(false);
+    });
+    return unsub;
+  }, [col, id]);
+  return { data, loading };
 }
 
-// ── Research Tab ────────────────────────────────────────────────────────────
+// ── TAB 1: RESEARCH ─────────────────────────────────────────────────────────
 const CRITERIA = [
   { id: "price", label: "Selling price $15–$70", tip: "Sweet spot for impulse buys with healthy margin.", weight: 2 },
   { id: "bsr", label: "BSR under 100,000 in main category", tip: "Proves consistent demand.", weight: 2 },
@@ -82,15 +92,28 @@ const MODELS = {
 };
 
 function ResearchTab() {
-  const { data, syncing, save } = useDocument("research/main", { checked: {}, model: "private_label" });
-  const checked = data.checked || {};
-  const model = data.model || "private_label";
-  const toggle = (id) => save({ ...data, checked: { ...checked, [id]: !checked[id] } });
-  const setModel = (m) => save({ ...data, model: m });
+  const { data, loading } = useDocument("settings", "research");
+  const [syncing, setSyncing] = useState(false);
+  const checked = data?.checked || {};
+  const model = data?.model || "private_label";
+
+  const toggle = async (id) => {
+    setSyncing(true);
+    await setDoc(doc(db, "settings", "research"), { checked: { ...checked, [id]: !checked[id] }, model }, { merge: true });
+    setSyncing(false);
+  };
+  const setModel = async (m) => {
+    setSyncing(true);
+    await setDoc(doc(db, "settings", "research"), { model: m }, { merge: true });
+    setSyncing(false);
+  };
+
   const score = CRITERIA.reduce((a, c) => a + (checked[c.id] ? c.weight : 0), 0);
   const maxScore = CRITERIA.reduce((a, c) => a + c.weight, 0);
   const pct = Math.round((score / maxScore) * 100);
-  const verdict = pct >= 80 ? { label: "Strong Product ✓", color: T.green } : pct >= 55 ? { label: "Needs More Vetting", color: T.yellow } : { label: "Too Risky", color: T.red };
+  const verdict = pct >= 80 ? { label: "Strong Product ✓", color: T.green } : pct >= 55 ? { label: "Needs Vetting", color: T.yellow } : { label: "Too Risky", color: T.red };
+
+  if (loading) return <LoadingSpinner />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "flex-end" }}><SyncBadge syncing={syncing} /></div>
@@ -110,7 +133,7 @@ function ResearchTab() {
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
           <SectionLabel>Product Score</SectionLabel>
-          <span style={{ fontFamily: T.mono, fontWeight: 800, fontSize: 16, color: verdict.color }}>{pct}% · {verdict.label}</span>
+          <span style={{ fontFamily: T.mono, fontWeight: 800, fontSize: 15, color: verdict.color }}>{pct}% · {verdict.label}</span>
         </div>
         <div style={{ background: T.surface, borderRadius: 999, height: 8, overflow: "hidden" }}>
           <div style={{ width: `${pct}%`, height: "100%", background: verdict.color, borderRadius: 999, transition: "width 0.4s ease" }} />
@@ -120,7 +143,7 @@ function ResearchTab() {
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {CRITERIA.map(c => (
           <div key={c.id} onClick={() => toggle(c.id)} style={{ background: checked[c.id] ? "#052e16" : T.surface, border: `1px solid ${checked[c.id] ? T.green + "50" : T.border}`, borderRadius: 10, padding: "13px 16px", cursor: "pointer", transition: "all 0.15s", display: "flex", gap: 14, alignItems: "flex-start" }}>
-            <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked[c.id] ? T.green : "#334155"}`, background: checked[c.id] ? T.green : "transparent", flexShrink: 0, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11 }}>{checked[c.id] ? "✓" : ""}</div>
+            <div style={{ width: 18, height: 18, borderRadius: 5, border: `2px solid ${checked[c.id] ? T.green : "#334155"}`, background: checked[c.id] ? T.green : "transparent", flexShrink: 0, marginTop: 2, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, transition: "all 0.15s" }}>{checked[c.id] ? "✓" : ""}</div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 600, color: checked[c.id] ? T.text : "#94a3b8", marginBottom: 2 }}>{c.label} <Badge color={T.sub}>+{c.weight}pt</Badge></div>
               <div style={{ fontSize: 12, color: T.sub }}>{c.tip}</div>
@@ -132,11 +155,22 @@ function ResearchTab() {
   );
 }
 
-// ── P&L Tab ─────────────────────────────────────────────────────────────────
+// ── TAB 2: P&L ──────────────────────────────────────────────────────────────
+const DEFAULT_PL = { sellingPrice: 35, unitCost: 6, shippingPerUnit: 1.5, unitsOrdered: 400, referralPct: 15, fulfillmentFee: 4.5, ppcBudget: 800, photography: 400, branding: 300, upc: 30, misc: 200 };
+
 function PLTab() {
-  const def = { sellingPrice: 35, unitCost: 6, shippingPerUnit: 1.5, unitsOrdered: 400, referralPct: 15, fulfillmentFee: 4.5, ppcBudget: 800, photography: 400, branding: 300, upc: 30, misc: 200 };
-  const { data: pl, syncing, save } = useDocument("pl/main", def);
-  const set = (k, v) => save({ ...pl, [k]: parseFloat(v) || 0 });
+  const { data, loading } = useDocument("settings", "pl");
+  const [syncing, setSyncing] = useState(false);
+  const pl = { ...DEFAULT_PL, ...data };
+
+  const set = async (k, v) => {
+    setSyncing(true);
+    await setDoc(doc(db, "settings", "pl"), { ...pl, [k]: parseFloat(v) || 0 });
+    setSyncing(false);
+  };
+
+  if (loading) return <LoadingSpinner />;
+
   const revenue = pl.sellingPrice * pl.unitsOrdered;
   const referral = (pl.referralPct / 100) * pl.sellingPrice * pl.unitsOrdered;
   const fulfillment = pl.fulfillmentFee * pl.unitsOrdered;
@@ -147,39 +181,42 @@ function PLTab() {
   const roi = ((profit / (cogs + shipping + launch)) * 100).toFixed(1);
   const margin = ((profit / revenue) * 100).toFixed(1);
   const breakEven = Math.ceil((referral + fulfillment + cogs + shipping + launch) / pl.sellingPrice);
-  const NF = ({ k, label, prefix = "$", step = 1 }) => (
+
+  const NumField = ({ k, label, prefix = "$", step = 1 }) => (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
       <label style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono }}>{label}</label>
       <div style={{ display: "flex", alignItems: "center", background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8 }}>
         <span style={{ padding: "0 10px", color: T.sub, fontSize: 12, fontFamily: T.mono }}>{prefix}</span>
-        <input type="number" value={pl[k] || 0} step={step} onChange={e => set(k, e.target.value)} style={{ background: "transparent", border: "none", outline: "none", color: T.text, fontSize: 13, fontFamily: T.mono, padding: "8px 10px 8px 0", width: "100%", fontWeight: 700 }} />
+        <input type="number" value={pl[k]} step={step} onChange={e => set(k, e.target.value)}
+          style={{ background: "transparent", border: "none", outline: "none", color: T.text, fontSize: 13, fontFamily: T.mono, padding: "8px 10px 8px 0", width: "100%", fontWeight: 700 }} />
       </div>
     </div>
   );
-  const SC = ({ label, value, color, sub }) => (
-    <div style={{ background: T.surface, border: `1px solid ${color}40`, borderRadius: 10, padding: "14px 16px" }}>
-      <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono, marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 20, fontWeight: 800, color, fontFamily: T.mono }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: T.sub, marginTop: 2, fontFamily: T.mono }}>{sub}</div>}
-    </div>
-  );
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "flex-end" }}><SyncBadge syncing={syncing} /></div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-        <SC label="Net Profit" value={fc(profit)} color={profit >= 0 ? T.green : T.red} sub={`${pl.unitsOrdered} units`} />
-        <SC label="Margin" value={`${margin}%`} color={margin >= 20 ? T.green : margin >= 10 ? T.yellow : T.red} sub="of revenue" />
-        <SC label="Total Investment" value={fc(cogs + shipping + launch)} color={T.accent} sub="inventory + launch" />
-        <SC label="ROI" value={`${roi}%`} color={roi >= 30 ? T.green : roi >= 15 ? T.yellow : T.red} sub="return on invest" />
+        {[["Net Profit", fc(profit), profit >= 0 ? T.green : T.red, `${pl.unitsOrdered} units`],
+          ["Margin", `${margin}%`, margin >= 20 ? T.green : margin >= 10 ? T.yellow : T.red, "of revenue"],
+          ["Investment", fc(cogs + shipping + launch), T.accent, "inventory + launch"],
+          ["ROI", `${roi}%`, roi >= 30 ? T.green : roi >= 15 ? T.yellow : T.red, "return on invest"]
+        ].map(([label, value, color, sub]) => (
+          <div key={label} style={{ background: T.surface, border: `1px solid ${color}40`, borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono, marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 20, fontWeight: 800, color, fontFamily: T.mono }}>{value}</div>
+            <div style={{ fontSize: 11, color: T.sub, marginTop: 2, fontFamily: T.mono }}>{sub}</div>
+          </div>
+        ))}
       </div>
       <Card style={{ fontFamily: T.mono }}>
         <span style={{ color: T.muted, fontSize: 12 }}>Break-even: </span>
         <span style={{ color: T.yellow, fontWeight: 800, fontSize: 15 }}>{breakEven} units</span>
         <span style={{ color: T.sub, fontSize: 12 }}> of {pl.unitsOrdered} ({Math.round((breakEven / pl.unitsOrdered) * 100)}%)</span>
       </Card>
-      <Card><SectionLabel>Product & Inventory</SectionLabel><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><NF k="sellingPrice" label="Selling Price" /><NF k="unitCost" label="Unit Cost" /><NF k="shippingPerUnit" label="Shipping/Unit" step={0.1} /><NF k="unitsOrdered" label="Units Ordered" prefix="#" step={50} /></div></Card>
-      <Card><SectionLabel>Amazon Fees</SectionLabel><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><NF k="referralPct" label="Referral %" prefix="%" step={1} /><NF k="fulfillmentFee" label="FBA Fee/Unit" step={0.1} /></div></Card>
-      <Card><SectionLabel>Launch Costs</SectionLabel><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><NF k="ppcBudget" label="PPC Budget" /><NF k="photography" label="Photography" /><NF k="branding" label="Branding" /><NF k="upc" label="UPC/FNSKU" /><NF k="misc" label="Misc Buffer" /></div></Card>
+      <Card><SectionLabel>Product & Inventory</SectionLabel><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><NumField k="sellingPrice" label="Selling Price" /><NumField k="unitCost" label="Unit Cost" /><NumField k="shippingPerUnit" label="Shipping/Unit" step={0.1} /><NumField k="unitsOrdered" label="Units Ordered" prefix="#" step={50} /></div></Card>
+      <Card><SectionLabel>Amazon Fees</SectionLabel><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><NumField k="referralPct" label="Referral %" prefix="%" step={1} /><NumField k="fulfillmentFee" label="FBA Fee/Unit" step={0.1} /></div></Card>
+      <Card><SectionLabel>Launch Costs</SectionLabel><div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}><NumField k="ppcBudget" label="PPC Budget" /><NumField k="photography" label="Photography" /><NumField k="branding" label="Branding" /><NumField k="upc" label="UPC/FNSKU" /><NumField k="misc" label="Misc Buffer" /></div></Card>
       <Card>
         <SectionLabel>Cost Breakdown</SectionLabel>
         {[["Revenue", revenue, T.green], ["COGS", -cogs, T.red], ["Shipping", -shipping, T.red], ["Referral Fee", -referral, T.yellow], ["FBA Fulfillment", -fulfillment, T.yellow], ["Launch Costs", -launch, T.yellow], ["NET PROFIT", profit, profit >= 0 ? T.green : T.red]].map(([label, val, color]) => (
@@ -193,19 +230,27 @@ function PLTab() {
   );
 }
 
-// ── Supplier Tab ─────────────────────────────────────────────────────────────
-const SS = ["Researching","Contacted","Sample Ordered","Sample Received","Negotiating","Approved","Rejected"];
-const SC2 = { Researching:T.muted, Contacted:"#60a5fa", "Sample Ordered":T.yellow, "Sample Received":"#a78bfa", Negotiating:T.accent, Approved:T.green, Rejected:T.red };
+// ── TAB 3: SUPPLIERS ────────────────────────────────────────────────────────
+const SUPPLIER_STATUS = ["Researching","Contacted","Sample Ordered","Sample Received","Negotiating","Approved","Rejected"];
+const STATUS_COLORS = { Researching: T.muted, Contacted: "#60a5fa", "Sample Ordered": T.yellow, "Sample Received": "#a78bfa", Negotiating: T.accent, Approved: T.green, Rejected: T.red };
+
 function SupplierTab() {
-  const { data: suppliers, syncing, add, update, remove } = useCollection("suppliers");
+  const { data: suppliers, loading } = useCollection("suppliers");
   const [form, setForm] = useState({ name: "", platform: "Alibaba", product: "", moq: "", pricePerUnit: "", leadTime: "", status: "Researching", notes: "" });
   const [adding, setAdding] = useState(false);
-  const handleAdd = async () => {
+  const [syncing, setSyncing] = useState(false);
+
+  const add = async () => {
     if (!form.name) return;
-    await add({ ...form, moq: +form.moq, pricePerUnit: +form.pricePerUnit, leadTime: +form.leadTime, rating: 3 });
+    setSyncing(true);
+    await setDoc(doc(db, "suppliers", uid()), { ...form, rating: 3, moq: +form.moq, pricePerUnit: +form.pricePerUnit, leadTime: +form.leadTime });
     setForm({ name: "", platform: "Alibaba", product: "", moq: "", pricePerUnit: "", leadTime: "", status: "Researching", notes: "" });
-    setAdding(false);
+    setAdding(false); setSyncing(false);
   };
+  const update = async (id, k, v) => { setSyncing(true); await updateDoc(doc(db, "suppliers", id), { [k]: v }); setSyncing(false); };
+  const remove = async (id) => { setSyncing(true); await deleteDoc(doc(db, "suppliers", id)); setSyncing(false); };
+
+  if (loading) return <LoadingSpinner />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -225,7 +270,7 @@ function SupplierTab() {
           </div>
           <Input value={form.notes} onChange={v => setForm(f => ({ ...f, notes: v }))} placeholder="Notes" style={{ marginBottom: 10 }} />
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleAdd} style={{ padding: "8px 20px", background: T.green, color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: T.mono }}>Save</button>
+            <button onClick={add} style={{ padding: "8px 20px", background: T.green, color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: T.mono }}>Save</button>
             <button onClick={() => setAdding(false)} style={{ padding: "8px 16px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 8, cursor: "pointer", fontSize: 12, fontFamily: T.mono }}>Cancel</button>
           </div>
         </Card>
@@ -233,48 +278,60 @@ function SupplierTab() {
       {suppliers.map(s => (
         <Card key={s.id}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-            <div><div style={{ fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 3 }}>{s.name}</div><div style={{ display: "flex", gap: 8 }}><Badge color={T.muted}>{s.platform}</Badge>{s.product && <Badge color="#60a5fa">{s.product}</Badge>}</div></div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 3 }}>{s.name}</div>
+              <div style={{ display: "flex", gap: 8 }}><Badge color={T.muted}>{s.platform}</Badge>{s.product && <Badge color="#60a5fa">{s.product}</Badge>}</div>
+            </div>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <select value={s.status} onChange={e => update(s.id, { status: e.target.value })} style={{ background: SC2[s.status] + "22", border: `1px solid ${SC2[s.status]}50`, borderRadius: 6, color: SC2[s.status], fontSize: 11, fontFamily: T.mono, fontWeight: 700, padding: "4px 8px", outline: "none", cursor: "pointer" }}>
-                {SS.map(st => <option key={st} value={st}>{st}</option>)}
+              <select value={s.status} onChange={e => update(s.id, "status", e.target.value)} style={{ background: STATUS_COLORS[s.status] + "22", border: `1px solid ${STATUS_COLORS[s.status]}50`, borderRadius: 6, color: STATUS_COLORS[s.status], fontSize: 11, fontFamily: T.mono, fontWeight: 700, padding: "4px 8px", outline: "none", cursor: "pointer" }}>
+                {SUPPLIER_STATUS.map(st => <option key={st} value={st}>{st}</option>)}
               </select>
-              <button onClick={() => remove(s.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 18 }}>×</button>
+              <button onClick={() => remove(s.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 16 }}>×</button>
             </div>
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 10 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 10 }}>
             {[["MOQ", s.moq + " units"], ["Price/Unit", "$" + s.pricePerUnit], ["Lead Time", s.leadTime + " days"]].map(([k, v]) => (
-              <div key={k} style={{ background: T.surface, borderRadius: 8, padding: "8px 12px", fontFamily: T.mono }}><div style={{ fontSize: 10, color: T.sub }}>{k}</div><div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{v}</div></div>
+              <div key={k} style={{ background: T.surface, borderRadius: 8, padding: "8px 12px", fontFamily: T.mono }}>
+                <div style={{ fontSize: 10, color: T.sub, marginBottom: 2 }}>{k}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{v}</div>
+              </div>
             ))}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: s.notes ? 8 : 0 }}>
             <span style={{ fontSize: 11, color: T.muted, fontFamily: T.mono }}>Rating:</span>
-            {[1,2,3,4,5].map(n => <span key={n} onClick={() => update(s.id, { rating: n })} style={{ cursor: "pointer", fontSize: 16, color: n <= (s.rating||3) ? T.accent : T.border }}>★</span>)}
+            {[1,2,3,4,5].map(n => <span key={n} onClick={() => update(s.id, "rating", n)} style={{ cursor: "pointer", fontSize: 16, color: n <= s.rating ? T.accent : T.border }}>★</span>)}
           </div>
-          {s.notes && <div style={{ fontSize: 12, color: T.sub, fontStyle: "italic", borderTop: `1px solid ${T.border}`, paddingTop: 8, marginTop: 8 }}>{s.notes}</div>}
+          {s.notes && <div style={{ fontSize: 12, color: T.sub, fontStyle: "italic", borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>{s.notes}</div>}
         </Card>
       ))}
     </div>
   );
 }
 
-// ── Keyword Tab ──────────────────────────────────────────────────────────────
+// ── TAB 4: KEYWORDS ─────────────────────────────────────────────────────────
 function KeywordTab() {
-  const { data: keywords, syncing: ks, add: addK, remove: removeK } = useCollection("keywords");
-  const { data: competitors, syncing: cs, add: addC, remove: removeC } = useCollection("competitors");
+  const { data: keywords, loading: kl } = useCollection("keywords");
+  const { data: competitors, loading: cl } = useCollection("competitors");
   const [kForm, setKForm] = useState({ keyword: "", volume: "", competition: "Medium", cpc: "", priority: "Medium", notes: "" });
   const [cForm, setCForm] = useState({ asin: "", name: "", price: "", reviews: "", rating: "", bsr: "", notes: "" });
   const [addingK, setAddingK] = useState(false);
   const [addingC, setAddingC] = useState(false);
-  const handleAddK = async () => { if (!kForm.keyword) return; await addK({ ...kForm, volume: +kForm.volume, cpc: +kForm.cpc }); setKForm({ keyword: "", volume: "", competition: "Medium", cpc: "", priority: "Medium", notes: "" }); setAddingK(false); };
-  const handleAddC = async () => { if (!cForm.name) return; await addC({ ...cForm, price: +cForm.price, reviews: +cForm.reviews, rating: +cForm.rating, bsr: +cForm.bsr }); setCForm({ asin: "", name: "", price: "", reviews: "", rating: "", bsr: "", notes: "" }); setAddingC(false); };
+  const [syncing, setSyncing] = useState(false);
+
+  const addK = async () => { if (!kForm.keyword) return; setSyncing(true); await setDoc(doc(db, "keywords", uid()), { ...kForm, volume: +kForm.volume, cpc: +kForm.cpc }); setKForm({ keyword: "", volume: "", competition: "Medium", cpc: "", priority: "Medium", notes: "" }); setAddingK(false); setSyncing(false); };
+  const addC = async () => { if (!cForm.name) return; setSyncing(true); await setDoc(doc(db, "competitors", uid()), { ...cForm, price: +cForm.price, reviews: +cForm.reviews, rating: +cForm.rating, bsr: +cForm.bsr }); setCForm({ asin: "", name: "", price: "", reviews: "", rating: "", bsr: "", notes: "" }); setAddingC(false); setSyncing(false); };
+  const delK = async (id) => { setSyncing(true); await deleteDoc(doc(db, "keywords", id)); setSyncing(false); };
+  const delC = async (id) => { setSyncing(true); await deleteDoc(doc(db, "competitors", id)); setSyncing(false); };
+
   const PC = { High: T.red, Medium: T.yellow, Low: T.green };
-  const CC = { Low: T.green, Medium: T.yellow, High: T.red };
-  const SF = (options) => ({ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, color: T.text, fontSize: 12, fontFamily: T.mono, padding: "7px 10px", outline: "none" });
+  if (kl || cl) return <LoadingSpinner />;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}><SyncBadge syncing={syncing} /></div>
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}><SectionLabel>Keywords</SectionLabel><SyncBadge syncing={ks} /></div>
+          <SectionLabel>Keywords ({keywords.length})</SectionLabel>
           <button onClick={() => setAddingK(a => !a)} style={{ padding: "6px 14px", background: T.accent, color: "#000", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 800, fontFamily: T.mono }}>+ Add</button>
         </div>
         {addingK && (
@@ -284,12 +341,12 @@ function KeywordTab() {
               <Input value={kForm.volume} onChange={v => setKForm(f => ({ ...f, volume: v }))} placeholder="Monthly searches" />
               <Input value={kForm.cpc} onChange={v => setKForm(f => ({ ...f, cpc: v }))} placeholder="CPC ($)" />
               <div style={{ display: "flex", gap: 8 }}>
-                <select value={kForm.competition} onChange={e => setKForm(f => ({ ...f, competition: e.target.value }))} style={SF()}>{["Low","Medium","High"].map(x => <option key={x}>{x}</option>)}</select>
-                <select value={kForm.priority} onChange={e => setKForm(f => ({ ...f, priority: e.target.value }))} style={SF()}>{["High","Medium","Low"].map(x => <option key={x}>{x}</option>)}</select>
+                <select value={kForm.competition} onChange={e => setKForm(f => ({ ...f, competition: e.target.value }))} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, color: T.text, fontSize: 12, fontFamily: T.mono, padding: "7px 10px", outline: "none" }}>{["Low","Medium","High"].map(o => <option key={o}>{o}</option>)}</select>
+                <select value={kForm.priority} onChange={e => setKForm(f => ({ ...f, priority: e.target.value }))} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, color: T.text, fontSize: 12, fontFamily: T.mono, padding: "7px 10px", outline: "none" }}>{["High","Medium","Low"].map(o => <option key={o}>{o}</option>)}</select>
               </div>
             </div>
             <Input value={kForm.notes} onChange={v => setKForm(f => ({ ...f, notes: v }))} placeholder="Notes" style={{ marginBottom: 10 }} />
-            <div style={{ display: "flex", gap: 8 }}><button onClick={handleAddK} style={{ padding: "7px 18px", background: T.green, color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.mono }}>Save</button><button onClick={() => setAddingK(false)} style={{ padding: "7px 14px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>Cancel</button></div>
+            <div style={{ display: "flex", gap: 8 }}><button onClick={addK} style={{ padding: "7px 18px", background: T.green, color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.mono }}>Save</button><button onClick={() => setAddingK(false)} style={{ padding: "7px 14px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>Cancel</button></div>
           </Card>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -297,7 +354,7 @@ function KeywordTab() {
             <Card key={k.id}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
                 <span style={{ fontSize: 14, fontWeight: 700, color: T.text, fontFamily: T.mono }}>{k.keyword}</span>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}><Badge color={PC[k.priority]}>{k.priority}</Badge><Badge color={CC[k.competition]}>{k.competition} Comp</Badge><button onClick={() => removeK(k.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 16 }}>×</button></div>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}><Badge color={PC[k.priority]}>{k.priority}</Badge><Badge color={PC[k.competition]}>{k.competition}</Badge><button onClick={() => delK(k.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 14 }}>×</button></div>
               </div>
               <div style={{ display: "flex", gap: 16, fontFamily: T.mono, fontSize: 12 }}>
                 <span><span style={{ color: T.sub }}>Vol: </span><span style={{ color: T.text, fontWeight: 700 }}>{Number(k.volume).toLocaleString()}/mo</span></span>
@@ -310,7 +367,7 @@ function KeywordTab() {
       </div>
       <div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}><SectionLabel>Competitors</SectionLabel><SyncBadge syncing={cs} /></div>
+          <SectionLabel>Competitors ({competitors.length})</SectionLabel>
           <button onClick={() => setAddingC(a => !a)} style={{ padding: "6px 14px", background: T.accent, color: "#000", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 800, fontFamily: T.mono }}>+ Add</button>
         </div>
         {addingC && (
@@ -324,7 +381,7 @@ function KeywordTab() {
               <Input value={cForm.bsr} onChange={v => setCForm(f => ({ ...f, bsr: v }))} placeholder="BSR" />
             </div>
             <Input value={cForm.notes} onChange={v => setCForm(f => ({ ...f, notes: v }))} placeholder="Notes" style={{ marginBottom: 10 }} />
-            <div style={{ display: "flex", gap: 8 }}><button onClick={handleAddC} style={{ padding: "7px 18px", background: T.green, color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.mono }}>Save</button><button onClick={() => setAddingC(false)} style={{ padding: "7px 14px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>Cancel</button></div>
+            <div style={{ display: "flex", gap: 8 }}><button onClick={addC} style={{ padding: "7px 18px", background: T.green, color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.mono }}>Save</button><button onClick={() => setAddingC(false)} style={{ padding: "7px 14px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>Cancel</button></div>
           </Card>
         )}
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -332,14 +389,14 @@ function KeywordTab() {
             <Card key={c.id}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                 <div><div style={{ fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 3 }}>{c.name}</div>{c.asin && <Badge color={T.muted}>{c.asin}</Badge>}</div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}><span style={{ fontSize: 20, fontWeight: 800, color: T.accent, fontFamily: T.mono }}>${c.price}</span><button onClick={() => removeC(c.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 16 }}>×</button></div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}><div style={{ fontSize: 20, fontWeight: 800, color: T.accent, fontFamily: T.mono }}>${c.price}</div><button onClick={() => delC(c.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 14 }}>×</button></div>
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: c.notes ? 10 : 0 }}>
                 {[["Reviews", Number(c.reviews).toLocaleString()], ["Rating", "★ " + c.rating], ["BSR", "#" + Number(c.bsr).toLocaleString()]].map(([k, v]) => (
                   <div key={k} style={{ background: T.surface, borderRadius: 7, padding: "7px 10px", fontFamily: T.mono }}><div style={{ fontSize: 10, color: T.sub }}>{k}</div><div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{v}</div></div>
                 ))}
               </div>
-              {c.notes && <div style={{ fontSize: 12, color: T.sub, fontStyle: "italic", borderTop: `1px solid ${T.border}`, paddingTop: 8, marginTop: 8 }}>{c.notes}</div>}
+              {c.notes && <div style={{ fontSize: 12, color: T.sub, fontStyle: "italic", borderTop: `1px solid ${T.border}`, paddingTop: 8 }}>{c.notes}</div>}
             </Card>
           ))}
         </div>
@@ -348,23 +405,39 @@ function KeywordTab() {
   );
 }
 
-// ── Inventory Tab ────────────────────────────────────────────────────────────
+// ── TAB 5: INVENTORY ────────────────────────────────────────────────────────
 function InventoryTab() {
-  const { data: items, syncing, add, update, remove } = useCollection("inventory");
+  const { data: items, loading } = useCollection("inventory");
   const [form, setForm] = useState({ product: "", sku: "", stock: "", dailySales: "", leadTime: 30, reorderQty: 300, unitCost: "" });
   const [adding, setAdding] = useState(false);
-  const handleAdd = async () => {
+  const [syncing, setSyncing] = useState(false);
+
+  const calcStatus = (stock, dailySales, leadTime) => stock <= dailySales * leadTime ? "Reorder Now" : stock <= dailySales * leadTime * 1.5 ? "Low" : "OK";
+
+  const add = async () => {
     if (!form.product) return;
-    const s = { ...form, stock: +form.stock, dailySales: +form.dailySales, leadTime: +form.leadTime, reorderQty: +form.reorderQty, unitCost: +form.unitCost };
-    s.status = s.stock <= s.dailySales * s.leadTime ? "Reorder Now" : s.stock <= s.dailySales * s.leadTime * 1.5 ? "Low" : "OK";
-    await add(s); setForm({ product: "", sku: "", stock: "", dailySales: "", leadTime: 30, reorderQty: 300, unitCost: "" }); setAdding(false);
+    setSyncing(true);
+    const stock = +form.stock, dailySales = +form.dailySales, leadTime = +form.leadTime;
+    await setDoc(doc(db, "inventory", uid()), { ...form, stock, dailySales, leadTime, reorderQty: +form.reorderQty, unitCost: +form.unitCost, status: calcStatus(stock, dailySales, leadTime) });
+    setForm({ product: "", sku: "", stock: "", dailySales: "", leadTime: 30, reorderQty: 300, unitCost: "" });
+    setAdding(false); setSyncing(false);
   };
-  const updateStock = async (item, v) => { const stock = +v; const status = stock <= item.dailySales * item.leadTime ? "Reorder Now" : stock <= item.dailySales * item.leadTime * 1.5 ? "Low" : "OK"; await update(item.id, { stock, status }); };
-  const STC = { OK: T.green, Low: T.yellow, "Reorder Now": T.red };
+
+  const updateStock = async (id, v, item) => {
+    setSyncing(true);
+    const stock = +v;
+    await updateDoc(doc(db, "inventory", id), { stock, status: calcStatus(stock, item.dailySales, item.leadTime) });
+    setSyncing(false);
+  };
+
+  const remove = async (id) => { setSyncing(true); await deleteDoc(doc(db, "inventory", id)); setSyncing(false); };
+  const SC = { OK: T.green, Low: T.yellow, "Reorder Now": T.red };
+  if (loading) return <LoadingSpinner />;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ display: "flex", gap: 10, alignItems: "center" }}><SectionLabel>Inventory Planner</SectionLabel><SyncBadge syncing={syncing} /></div>
+        <SyncBadge syncing={syncing} />
         <button onClick={() => setAdding(a => !a)} style={{ padding: "7px 14px", background: T.accent, color: "#000", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 11, fontWeight: 800, fontFamily: T.mono }}>+ Add Product</button>
       </div>
       {adding && (
@@ -378,24 +451,24 @@ function InventoryTab() {
             <Input value={form.reorderQty} onChange={v => setForm(f => ({ ...f, reorderQty: v }))} placeholder="Reorder qty" />
             <Input value={form.unitCost} onChange={v => setForm(f => ({ ...f, unitCost: v }))} placeholder="Unit cost ($)" />
           </div>
-          <div style={{ display: "flex", gap: 8 }}><button onClick={handleAdd} style={{ padding: "7px 18px", background: T.green, color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.mono }}>Save</button><button onClick={() => setAdding(false)} style={{ padding: "7px 14px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>Cancel</button></div>
+          <div style={{ display: "flex", gap: 8 }}><button onClick={add} style={{ padding: "7px 18px", background: T.green, color: "#fff", border: "none", borderRadius: 7, cursor: "pointer", fontSize: 11, fontWeight: 700, fontFamily: T.mono }}>Save</button><button onClick={() => setAdding(false)} style={{ padding: "7px 14px", background: T.surface, color: T.muted, border: `1px solid ${T.border}`, borderRadius: 7, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>Cancel</button></div>
         </Card>
       )}
       {items.map(item => {
         const daysLeft = Math.floor(item.stock / (item.dailySales || 1));
-        const stockPct = Math.min(100, Math.round((item.stock / (item.dailySales * 60)) * 100));
+        const stockPct = Math.min(100, Math.round((item.stock / ((item.dailySales || 1) * 60)) * 100));
         return (
           <Card key={item.id}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
               <div><div style={{ fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 4 }}>{item.product}</div>{item.sku && <Badge color={T.muted}>{item.sku}</Badge>}</div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span style={{ fontSize: 11, fontFamily: T.mono, fontWeight: 800, color: STC[item.status], background: STC[item.status] + "22", padding: "4px 10px", borderRadius: 6 }}>{item.status}</span>
-                <button onClick={() => remove(item.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 18 }}>×</button>
+                <span style={{ fontSize: 11, fontFamily: T.mono, fontWeight: 800, color: SC[item.status], background: SC[item.status] + "22", padding: "4px 10px", borderRadius: 6 }}>{item.status}</span>
+                <button onClick={() => remove(item.id)} style={{ background: "none", border: "none", color: T.red, cursor: "pointer", fontSize: 16 }}>×</button>
               </div>
             </div>
             <div style={{ marginBottom: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: T.mono, color: T.sub, marginBottom: 5 }}><span>Stock: {item.stock.toLocaleString()} units</span><span>{daysLeft} days left</span></div>
-              <div style={{ background: T.surface, borderRadius: 999, height: 8, overflow: "hidden" }}><div style={{ width: `${stockPct}%`, height: "100%", background: STC[item.status], borderRadius: 999 }} /></div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, fontFamily: T.mono, color: T.sub, marginBottom: 5 }}><span>{item.stock.toLocaleString()} units</span><span>{daysLeft} days left</span></div>
+              <div style={{ background: T.surface, borderRadius: 999, height: 8, overflow: "hidden" }}><div style={{ width: `${stockPct}%`, height: "100%", background: SC[item.status], borderRadius: 999, transition: "width 0.4s ease" }} /></div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, marginBottom: 12 }}>
               {[["Reorder Point", item.dailySales * item.leadTime + " units"], ["Lead Time", item.leadTime + " days"], ["Reorder Cost", "$" + (item.reorderQty * item.unitCost).toLocaleString()]].map(([k, v]) => (
@@ -404,7 +477,7 @@ function InventoryTab() {
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 11, color: T.muted, fontFamily: T.mono }}>Update stock:</span>
-              <input type="number" defaultValue={item.stock} onBlur={e => updateStock(item, e.target.value)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontSize: 12, fontFamily: T.mono, padding: "5px 10px", outline: "none", width: 100 }} />
+              <input type="number" defaultValue={item.stock} onBlur={e => updateStock(item.id, e.target.value, item)} style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 6, color: T.text, fontSize: 12, fontFamily: T.mono, padding: "5px 10px", outline: "none", width: 100 }} />
             </div>
           </Card>
         );
@@ -413,14 +486,14 @@ function InventoryTab() {
   );
 }
 
-// ── Launch Tab ───────────────────────────────────────────────────────────────
+// ── TAB 6: LAUNCH CHECKLIST ─────────────────────────────────────────────────
 const PHASES = [
   { phase: "Phase 1 · Pre-Launch (Weeks 1–4)", color: "#60a5fa", tasks: [
     { id: "l1", text: "Register Amazon Seller account", link: "https://sell.amazon.com" },
     { id: "l2", text: "File trademark with USPTO (~$250)", link: "https://uspto.gov" },
-    { id: "l3", text: "Place bulk order with supplier" },
+    { id: "l3", text: "Finalize product and place bulk order with supplier" },
     { id: "l4", text: "Design logo, packaging & inserts" },
-    { id: "l5", text: "Purchase UPC barcode" },
+    { id: "l5", text: "Purchase UPC barcode (GS1)" },
     { id: "l6", text: "Book product photography (7+ photos)" },
     { id: "l7", text: "Set up LLC or business entity" },
     { id: "l8", text: "Open dedicated business bank account" },
@@ -430,44 +503,53 @@ const PHASES = [
     { id: "l10", text: "Write keyword-optimized title, bullets & description" },
     { id: "l11", text: "Upload all product photos" },
     { id: "l12", text: "Set competitive pricing based on P&L model" },
-    { id: "l13", text: "Create FBA shipment plan" },
+    { id: "l13", text: "Create FBA shipment plan in Seller Central" },
     { id: "l14", text: "Label all units with FNSKU barcodes" },
     { id: "l15", text: "Ship inventory to Amazon fulfillment center" },
   ]},
   { phase: "Phase 3 · Launch (Weeks 9–12)", color: T.accent, tasks: [
-    { id: "l16", text: "Activate listing once inventory is received" },
+    { id: "l16", text: "Activate listing once inventory received" },
     { id: "l17", text: "Launch Automatic PPC Campaign ($20–30/day)" },
-    { id: "l18", text: "Launch Manual PPC Campaign" },
-    { id: "l19", text: "Send product to friends/family for honest reviews" },
-    { id: "l20", text: "Enroll in Amazon Vine (if Brand Registered)" },
-    { id: "l21", text: "Monitor ACoS daily, adjust bids weekly" },
+    { id: "l18", text: "Launch Manual PPC for top keywords" },
+    { id: "l19", text: "Send product to initial reviewers" },
+    { id: "l20", text: "Enroll in Amazon Vine program (if Brand Registered)" },
+    { id: "l21", text: "Monitor PPC ACoS daily, adjust bids weekly" },
   ]},
   { phase: "Phase 4 · Scale (Month 3+)", color: T.green, tasks: [
     { id: "l22", text: "Apply for Amazon Brand Registry" },
     { id: "l23", text: "Create A+ Content and Amazon Storefront" },
-    { id: "l24", text: "Analyze Search Term Report — add negatives" },
+    { id: "l24", text: "Analyze Search Term Report — add negatives, scale winners" },
     { id: "l25", text: "Place reorder based on inventory planner" },
-    { id: "l26", text: "Expand to new variations or products" },
+    { id: "l26", text: "Expand to additional variations or new products" },
     { id: "l27", text: "Set up external traffic (TikTok, Meta)" },
   ]},
 ];
 
 function LaunchTab() {
-  const { data, syncing, save } = useDocument("launch/main", { checked: {} });
-  const checked = data.checked || {};
-  const toggle = (id) => save({ ...data, checked: { ...checked, [id]: !checked[id] } });
+  const { data, loading } = useDocument("settings", "checklist");
+  const [syncing, setSyncing] = useState(false);
+  const checked = data?.checked || {};
   const total = PHASES.reduce((a, p) => a + p.tasks.length, 0);
   const done = Object.values(checked).filter(Boolean).length;
   const pct = Math.round((done / total) * 100);
+
+  const toggle = async (id) => {
+    setSyncing(true);
+    await setDoc(doc(db, "settings", "checklist"), { checked: { ...checked, [id]: !checked[id] } }, { merge: true });
+    setSyncing(false);
+  };
+
+  if (loading) return <LoadingSpinner />;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <div style={{ display: "flex", justifyContent: "flex-end" }}><SyncBadge syncing={syncing} /></div>
       <Card>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}><SectionLabel>Launch Progress</SectionLabel><SyncBadge syncing={syncing} /></div>
+          <SectionLabel>Overall Progress</SectionLabel>
           <span style={{ fontFamily: T.mono, fontWeight: 800, fontSize: 16, color: T.accent }}>{done}/{total} · {pct}%</span>
         </div>
         <div style={{ background: T.surface, borderRadius: 999, height: 10, overflow: "hidden" }}>
-          <div style={{ width: `${pct}%`, height: "100%", background: `linear-gradient(90deg, #3b82f6, ${T.accent}, ${T.green})`, borderRadius: 999, transition: "width 0.4s ease" }} />
+          <div style={{ width: `${pct}%`, height: "100%", background: T.accent, borderRadius: 999, transition: "width 0.4s ease" }} />
         </div>
       </Card>
       {PHASES.map(({ phase, color, tasks }) => {
@@ -481,7 +563,7 @@ function LaunchTab() {
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {tasks.map(t => (
                 <div key={t.id} onClick={() => toggle(t.id)} style={{ background: checked[t.id] ? "#052e16" : T.surface, border: `1px solid ${checked[t.id] ? T.green + "40" : T.border}`, borderRadius: 8, padding: "11px 14px", cursor: "pointer", transition: "all 0.15s", display: "flex", gap: 12, alignItems: "center" }}>
-                  <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${checked[t.id] ? T.green : "#334155"}`, background: checked[t.id] ? T.green : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>{checked[t.id] ? "✓" : ""}</div>
+                  <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${checked[t.id] ? T.green : "#334155"}`, background: checked[t.id] ? T.green : "transparent", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10, transition: "all 0.15s" }}>{checked[t.id] ? "✓" : ""}</div>
                   <span style={{ fontSize: 13, color: checked[t.id] ? T.muted : T.text, textDecoration: checked[t.id] ? "line-through" : "none", flex: 1 }}>{t.text}</span>
                   {t.link && <a href={t.link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 11, color, fontFamily: T.mono, textDecoration: "none", flexShrink: 0 }}>↗ Open</a>}
                 </div>
@@ -494,7 +576,7 @@ function LaunchTab() {
   );
 }
 
-// ── Root ─────────────────────────────────────────────────────────────────────
+// ── ROOT ─────────────────────────────────────────────────────────────────────
 const TABS = [
   { id: "research", icon: "🔍", label: "Research" },
   { id: "pl", icon: "📊", label: "P&L" },
@@ -514,12 +596,12 @@ export default function App() {
             <div style={{ width: 30, height: 30, background: T.accent, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>📦</div>
             <div>
               <div style={{ fontSize: 15, fontWeight: 800, letterSpacing: "-0.02em" }}>FBA Command Center</div>
-              <div style={{ fontSize: 11, color: T.muted, fontFamily: T.mono }}>Live sync · 2 users</div>
+              <div style={{ fontSize: 11, color: T.muted, fontFamily: T.mono }}>Firebase Sync · Live</div>
             </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <div style={{ width: 7, height: 7, borderRadius: "50%", background: T.green }} />
-            <span style={{ fontSize: 11, color: T.muted, fontFamily: T.mono }}>Firebase connected</span>
+          <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <div style={{ width: 8, height: 8, borderRadius: "50%", background: T.green }} />
+            <span style={{ fontSize: 11, color: T.muted, fontFamily: T.mono }}>2 users connected</span>
           </div>
         </div>
       </div>
