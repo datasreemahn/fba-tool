@@ -45,25 +45,22 @@ const Badge = ({ children, color = T.accent }) => (
 
 // ── Gemini API call ──────────────────────────────────────────────────────────
 async function callGemini(prompt) {
-  const apiKey = process.env.REACT_APP_GEMINI_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
-
-  const response = await fetch(url, {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${process.env.REACT_APP_GROQ_KEY}`,
+    },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.7,
-        maxOutputTokens: 2048,
-      },
+      model: "llama-3.3-70b-versatile",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.7,
+      max_tokens: 2048,
     }),
   });
-
   const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || "Gemini API error");
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  // Strip markdown code fences if present
+  if (!response.ok) throw new Error(data?.error?.message || "Groq API error");
+  const text = data?.choices?.[0]?.message?.content || "";
   return text.replace(/```json|```/g, "").trim();
 }
 
