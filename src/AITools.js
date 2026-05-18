@@ -13,21 +13,17 @@ const T = {
 const Card = ({ children, style = {} }) => (
   <div style={{ background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 20, ...style }}>{children}</div>
 );
-
 const SectionLabel = ({ children }) => (
   <div style={{ fontSize: 11, color: T.muted, textTransform: "uppercase", letterSpacing: "0.1em", fontFamily: T.mono, marginBottom: 12 }}>{children}</div>
 );
-
 const Input = ({ value, onChange, placeholder, style = {} }) => (
   <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
     style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, color: T.text, fontSize: 13, fontFamily: T.mono, padding: "10px 14px", outline: "none", width: "100%", boxSizing: "border-box", ...style }} />
 );
-
 const Textarea = ({ value, onChange, placeholder, rows = 4 }) => (
   <textarea value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} rows={rows}
     style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 8, color: T.text, fontSize: 13, fontFamily: T.mono, padding: "10px 14px", outline: "none", width: "100%", boxSizing: "border-box", resize: "vertical", lineHeight: 1.6 }} />
 );
-
 const RunButton = ({ onClick, loading, label = "Analyze with AI", color = T.accent }) => (
   <button onClick={onClick} disabled={loading} style={{
     padding: "12px 24px", background: loading ? T.surface : color, color: loading ? T.muted : "#000",
@@ -43,30 +39,27 @@ const RunButton = ({ onClick, loading, label = "Analyze with AI", color = T.acce
     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
   </button>
 );
-
 const Badge = ({ children, color = T.accent }) => (
   <span style={{ fontSize: 11, fontFamily: T.mono, background: color + "22", color, padding: "3px 8px", borderRadius: 4, fontWeight: 700 }}>{children}</span>
 );
 
-// ── Anthropic API call ───────────────────────────────────────────────────────
-async function callClaude(systemPrompt, userPrompt) {
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+// ── Gemini API call ──────────────────────────────────────────────────────────
+async function callGemini(prompt) {
+  const key = process.env.REACT_APP_GEMINI_KEY;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+  const response = await fetch(url, {
     method: "POST",
-    headers: { 
-      "Content-Type": "application/json",
-      "x-api-key": process.env.REACT_APP_ANTHROPIC_KEY,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
- },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userPrompt }],
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
     }),
   });
   const data = await response.json();
-  return data.content?.[0]?.text || "";
+  if (!response.ok) throw new Error(data.error?.message || "API error");
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  // Strip markdown code fences if present
+  return text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,16 +76,20 @@ function ProductAnalyzer() {
     if (!idea.trim()) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      const system = `You are an expert Amazon FBA product research analyst with 10+ years of experience. 
-Analyze product ideas and return ONLY a JSON object (no markdown, no backticks, no explanation).
-The JSON must have exactly these fields:
+      const prompt = `You are an expert Amazon FBA product research analyst.
+Analyze this product idea for Amazon FBA viability and return ONLY a valid JSON object with no markdown, no backticks, no explanation.
+
+Product idea: "${idea}"
+Budget: ${budget}
+
+Return exactly this JSON structure:
 {
   "score": <number 0-100>,
-  "verdict": <"Strong Opportunity" | "Moderate Potential" | "High Risk">,
+  "verdict": <"Strong Opportunity" or "Moderate Potential" or "High Risk">,
   "estimatedMonthlyRevenue": <string like "$8,000–$15,000">,
   "estimatedMargin": <string like "22–30%">,
-  "competitionLevel": <"Low" | "Medium" | "High">,
-  "demandLevel": <"Low" | "Medium" | "High">,
+  "competitionLevel": <"Low" or "Medium" or "High">,
+  "demandLevel": <"Low" or "Medium" or "High">,
   "pros": [<3-5 short strings>],
   "cons": [<3-5 short strings>],
   "suggestedSellingPrice": <string like "$24.99–$34.99">,
@@ -101,11 +98,11 @@ The JSON must have exactly these fields:
   "biggestRisk": <one sentence>,
   "recommendation": <2-3 sentence actionable advice>
 }`;
-      const raw = await callClaude(system, `Product idea: "${idea}"\nBudget: ${budget}\nAnalyze this for Amazon FBA viability.`);
-      const clean = raw.replace(/```json|```/g, "").trim();
-      setResult(JSON.parse(clean));
+      const raw = await callGemini(prompt);
+      setResult(JSON.parse(raw));
     } catch (e) {
-      setError("Analysis failed. Please try again.");
+      console.error(e);
+      setError("Analysis failed: " + e.message);
     }
     setLoading(false);
   };
@@ -120,11 +117,11 @@ The JSON must have exactly these fields:
           <div style={{ width: 36, height: 36, background: T.accent + "22", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🧠</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>Product Idea Analyzer</div>
-            <div style={{ fontSize: 12, color: T.muted, fontFamily: T.mono }}>AI scores your idea against 12 FBA criteria</div>
+            <div style={{ fontSize: 12, color: T.muted, fontFamily: T.mono }}>AI scores your idea against FBA criteria</div>
           </div>
         </div>
         <SectionLabel>Your Product Idea</SectionLabel>
-        <Input value={idea} onChange={setIdea} placeholder="e.g. bamboo toothbrush holder, silicone baking mat, portable phone stand..." style={{ marginBottom: 12 }} />
+        <Input value={idea} onChange={setIdea} placeholder="e.g. bamboo toothbrush holder, silicone baking mat..." style={{ marginBottom: 12 }} />
         <SectionLabel>Your Budget</SectionLabel>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {["Under $3,000", "$3,000–$5,000", "$5,000–$10,000", "$10,000+"].map(b => (
@@ -132,12 +129,11 @@ The JSON must have exactly these fields:
           ))}
         </div>
         <RunButton onClick={analyze} loading={loading} label="Analyze Product Idea" />
-        {error && <div style={{ marginTop: 12, fontSize: 12, color: T.red, fontFamily: T.mono }}>{error}</div>}
+        {error && <div style={{ marginTop: 12, fontSize: 12, color: T.red, fontFamily: T.mono, lineHeight: 1.5 }}>{error}</div>}
       </Card>
 
       {result && (
         <>
-          {/* Score card */}
           <Card style={{ border: `1px solid ${scoreColor}40` }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <div>
@@ -166,49 +162,35 @@ The JSON must have exactly these fields:
             </div>
           </Card>
 
-          {/* Pros & Cons */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Card>
               <SectionLabel>Pros ✓</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {result.pros.map((p, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <span style={{ color: T.green, fontSize: 14, flexShrink: 0, marginTop: 1 }}>+</span>
-                    <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{p}</span>
-                  </div>
-                ))}
-              </div>
+              {result.pros.map((p, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8 }}>
+                  <span style={{ color: T.green, fontSize: 14, flexShrink: 0 }}>+</span>
+                  <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{p}</span>
+                </div>
+              ))}
             </Card>
             <Card>
               <SectionLabel>Cons ✗</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                {result.cons.map((c, i) => (
-                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                    <span style={{ color: T.red, fontSize: 14, flexShrink: 0, marginTop: 1 }}>−</span>
-                    <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{c}</span>
-                  </div>
-                ))}
-              </div>
+              {result.cons.map((c, i) => (
+                <div key={i} style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 8 }}>
+                  <span style={{ color: T.red, fontSize: 14, flexShrink: 0 }}>−</span>
+                  <span style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}>{c}</span>
+                </div>
+              ))}
             </Card>
           </div>
 
-          {/* Insights */}
           <Card>
             <SectionLabel>Key Insights</SectionLabel>
-            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ background: T.green + "12", border: `1px solid ${T.green}30`, borderRadius: 8, padding: "12px 14px" }}>
-                <div style={{ fontSize: 11, color: T.green, fontFamily: T.mono, fontWeight: 700, marginBottom: 4 }}>KEY OPPORTUNITY</div>
-                <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{result.keyOpportunity}</div>
+            {[["KEY OPPORTUNITY", result.keyOpportunity, T.green], ["BIGGEST RISK", result.biggestRisk, T.red], ["AI RECOMMENDATION", result.recommendation, T.accent]].map(([label, text, color]) => (
+              <div key={label} style={{ background: color + "12", border: `1px solid ${color}30`, borderRadius: 8, padding: "12px 14px", marginBottom: 10 }}>
+                <div style={{ fontSize: 11, color, fontFamily: T.mono, fontWeight: 700, marginBottom: 4 }}>{label}</div>
+                <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{text}</div>
               </div>
-              <div style={{ background: T.red + "12", border: `1px solid ${T.red}30`, borderRadius: 8, padding: "12px 14px" }}>
-                <div style={{ fontSize: 11, color: T.red, fontFamily: T.mono, fontWeight: 700, marginBottom: 4 }}>BIGGEST RISK</div>
-                <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{result.biggestRisk}</div>
-              </div>
-              <div style={{ background: T.accent + "12", border: `1px solid ${T.accent}30`, borderRadius: 8, padding: "12px 14px" }}>
-                <div style={{ fontSize: 11, color: T.accent, fontFamily: T.mono, fontWeight: 700, marginBottom: 4 }}>AI RECOMMENDATION</div>
-                <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{result.recommendation}</div>
-              </div>
-            </div>
+            ))}
           </Card>
         </>
       )}
@@ -232,29 +214,30 @@ function ListingGenerator() {
     if (!form.product.trim()) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      const system = `You are an expert Amazon listing copywriter who specializes in SEO-optimized product listings that convert. 
-Return ONLY a JSON object (no markdown, no backticks, no explanation) with exactly these fields:
-{
-  "title": <string, 150-200 chars, keyword-rich Amazon title>,
-  "bullets": [<exactly 5 strings, each 150-200 chars, benefit-focused bullet points starting with ALL CAPS keyword phrase>],
-  "description": <string, 200-300 words, engaging product description>,
-  "backendKeywords": <string, comma-separated keywords not used in title/bullets, under 250 bytes>,
-  "searchTerms": [<5-7 high-value search terms customers would use>],
-  "pricingInsight": <one sentence about pricing strategy>
-}`;
-      const prompt = `Product: ${form.product}
+      const prompt = `You are an expert Amazon listing copywriter specializing in SEO-optimized listings that convert.
+Return ONLY a valid JSON object with no markdown, no backticks, no explanation.
+
+Product: ${form.product}
 Category: ${form.category || "General"}
 Key features: ${form.features || "Not specified"}
 Target customer: ${form.targetCustomer || "General consumer"}
 Competitors: ${form.competitors || "Not specified"}
 Price point: ${form.price || "Not specified"}
 
-Generate a complete, conversion-optimized Amazon listing.`;
-      const raw = await callClaude(system, prompt);
-      const clean = raw.replace(/```json|```/g, "").trim();
-      setResult(JSON.parse(clean));
+Return exactly this JSON structure:
+{
+  "title": <string, 150-200 chars, keyword-rich Amazon title>,
+  "bullets": [<exactly 5 strings, each 150-200 chars, benefit-focused, starting with ALL CAPS keyword phrase>],
+  "description": <string, 200-300 words, engaging product description>,
+  "backendKeywords": <string, comma-separated keywords not in title or bullets, under 250 bytes>,
+  "searchTerms": [<5-7 high-value search terms>],
+  "pricingInsight": <one sentence about pricing strategy>
+}`;
+      const raw = await callGemini(prompt);
+      setResult(JSON.parse(raw));
     } catch (e) {
-      setError("Generation failed. Please try again.");
+      console.error(e);
+      setError("Generation failed: " + e.message);
     }
     setLoading(false);
   };
@@ -282,22 +265,10 @@ Generate a complete, conversion-optimized Amazon listing.`;
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
-          <div>
-            <SectionLabel>Product Name *</SectionLabel>
-            <Input value={form.product} onChange={v => set("product", v)} placeholder="e.g. Bamboo Cutting Board" />
-          </div>
-          <div>
-            <SectionLabel>Amazon Category</SectionLabel>
-            <Input value={form.category} onChange={v => set("category", v)} placeholder="e.g. Kitchen & Dining" />
-          </div>
-          <div>
-            <SectionLabel>Price Point</SectionLabel>
-            <Input value={form.price} onChange={v => set("price", v)} placeholder="e.g. $29.99" />
-          </div>
-          <div>
-            <SectionLabel>Target Customer</SectionLabel>
-            <Input value={form.targetCustomer} onChange={v => set("targetCustomer", v)} placeholder="e.g. Home cooks, meal preppers" />
-          </div>
+          <div><SectionLabel>Product Name *</SectionLabel><Input value={form.product} onChange={v => set("product", v)} placeholder="e.g. Bamboo Cutting Board" /></div>
+          <div><SectionLabel>Amazon Category</SectionLabel><Input value={form.category} onChange={v => set("category", v)} placeholder="e.g. Kitchen & Dining" /></div>
+          <div><SectionLabel>Price Point</SectionLabel><Input value={form.price} onChange={v => set("price", v)} placeholder="e.g. $29.99" /></div>
+          <div><SectionLabel>Target Customer</SectionLabel><Input value={form.targetCustomer} onChange={v => set("targetCustomer", v)} placeholder="e.g. Home cooks, meal preppers" /></div>
         </div>
         <div style={{ marginBottom: 12 }}>
           <SectionLabel>Key Features / USPs</SectionLabel>
@@ -313,7 +284,6 @@ Generate a complete, conversion-optimized Amazon listing.`;
 
       {result && (
         <>
-          {/* Title */}
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <SectionLabel>Product Title</SectionLabel>
@@ -325,23 +295,19 @@ Generate a complete, conversion-optimized Amazon listing.`;
             <div style={{ fontSize: 14, color: T.text, lineHeight: 1.6, background: T.surface, borderRadius: 8, padding: "12px 14px", fontWeight: 600 }}>{result.title}</div>
           </Card>
 
-          {/* Bullets */}
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <SectionLabel>5 Bullet Points</SectionLabel>
-              <CopyBtn text={result.bullets.map((b, i) => `• ${b}`).join("\n\n")} id="bullets" />
+              <CopyBtn text={result.bullets.map(b => `• ${b}`).join("\n\n")} id="bullets" />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {result.bullets.map((b, i) => (
-                <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", background: T.surface, borderRadius: 8, padding: "10px 14px" }}>
-                  <span style={{ color: T.blue, fontFamily: T.mono, fontWeight: 800, fontSize: 12, flexShrink: 0, marginTop: 2 }}>0{i + 1}</span>
-                  <span style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{b}</span>
-                </div>
-              ))}
-            </div>
+            {result.bullets.map((b, i) => (
+              <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start", background: T.surface, borderRadius: 8, padding: "10px 14px", marginBottom: 8 }}>
+                <span style={{ color: T.blue, fontFamily: T.mono, fontWeight: 800, fontSize: 12, flexShrink: 0, marginTop: 2 }}>0{i + 1}</span>
+                <span style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{b}</span>
+              </div>
+            ))}
           </Card>
 
-          {/* Description */}
           <Card>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
               <SectionLabel>Product Description</SectionLabel>
@@ -350,7 +316,6 @@ Generate a complete, conversion-optimized Amazon listing.`;
             <div style={{ fontSize: 13, color: T.text, lineHeight: 1.8, background: T.surface, borderRadius: 8, padding: "12px 14px" }}>{result.description}</div>
           </Card>
 
-          {/* Keywords */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
             <Card>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
@@ -361,18 +326,15 @@ Generate a complete, conversion-optimized Amazon listing.`;
             </Card>
             <Card>
               <SectionLabel>Top Search Terms</SectionLabel>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {result.searchTerms.map((t, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: T.surface, borderRadius: 6, padding: "7px 10px" }}>
-                    <span style={{ fontSize: 12, color: T.text, fontFamily: T.mono }}>{t}</span>
-                    <button onClick={() => copy(t, `term-${i}`)} style={{ background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>{copied === `term-${i}` ? "✓" : "copy"}</button>
-                  </div>
-                ))}
-              </div>
+              {result.searchTerms.map((t, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: T.surface, borderRadius: 6, padding: "7px 10px", marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, color: T.text, fontFamily: T.mono }}>{t}</span>
+                  <button onClick={() => copy(t, `term-${i}`)} style={{ background: "none", border: "none", color: T.muted, cursor: "pointer", fontSize: 11, fontFamily: T.mono }}>{copied === `term-${i}` ? "✓" : "copy"}</button>
+                </div>
+              ))}
             </Card>
           </div>
 
-          {/* Pricing insight */}
           <Card style={{ border: `1px solid ${T.accent}30`, background: T.accent + "08" }}>
             <div style={{ fontSize: 11, color: T.accent, fontFamily: T.mono, fontWeight: 700, marginBottom: 6 }}>💡 PRICING INSIGHT</div>
             <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{result.pricingInsight}</div>
@@ -398,31 +360,35 @@ function KeywordResearch() {
     if (!product.trim()) return;
     setLoading(true); setError(""); setResult(null);
     try {
-      const system = `You are an expert Amazon keyword research specialist. 
-Return ONLY a JSON object (no markdown, no backticks, no explanation) with exactly this structure:
+      const prompt = `You are an expert Amazon keyword research specialist.
+Return ONLY a valid JSON object with no markdown, no backticks, no explanation.
+
+Product: ${product}
+Category: ${category || "General"}
+
+Return exactly this JSON structure with exactly 20 keywords:
 {
   "primaryKeyword": <string, the single best main keyword>,
   "keywords": [
     {
       "keyword": <string>,
       "estimatedMonthlyVolume": <string like "12,000–18,000">,
-      "competition": <"Low" | "Medium" | "High">,
-      "intent": <"Buyer" | "Researcher" | "Browser">,
-      "priority": <"Primary" | "Secondary" | "Long-tail">,
+      "competition": <"Low" or "Medium" or "High">,
+      "intent": <"Buyer" or "Researcher" or "Browser">,
+      "priority": <"Primary" or "Secondary" or "Long-tail">,
       "suggestedBid": <string like "$0.80–$1.20">,
-      "tip": <short string, one actionable tip for this keyword>
+      "tip": <short actionable tip for this keyword>
     }
   ],
-  "negativeKeywords": [<5-8 strings to exclude from PPC>],
+  "negativeKeywords": [<6-8 strings to exclude from PPC>],
   "ppcStrategy": <2-3 sentence PPC launch strategy>,
-  "totalKeywords": <number>
-}
-Include exactly 20 keywords covering primary, secondary, and long-tail variations.`;
-      const raw = await callClaude(system, `Product: ${product}\nCategory: ${category || "General"}\n\nResearch 20 Amazon keywords for this product, covering all intent types and competition levels.`);
-      const clean = raw.replace(/```json|```/g, "").trim();
-      setResult(JSON.parse(clean));
+  "totalKeywords": 20
+}`;
+      const raw = await callGemini(prompt);
+      setResult(JSON.parse(raw));
     } catch (e) {
-      setError("Research failed. Please try again.");
+      console.error(e);
+      setError("Research failed: " + e.message);
     }
     setLoading(false);
   };
@@ -430,7 +396,6 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
   const COMP_C = { Low: T.green, Medium: T.yellow, High: T.red };
   const INTENT_C = { Buyer: T.green, Researcher: T.blue, Browser: T.muted };
   const PRIO_C = { Primary: T.accent, Secondary: T.blue, "Long-tail": T.purple };
-
   const filtered = result?.keywords?.filter(k => filter === "All" || k.priority === filter) || [];
 
   return (
@@ -444,14 +409,8 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
           </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 16 }}>
-          <div>
-            <SectionLabel>Your Product *</SectionLabel>
-            <Input value={product} onChange={setProduct} placeholder="e.g. bamboo cutting board" />
-          </div>
-          <div>
-            <SectionLabel>Category (optional)</SectionLabel>
-            <Input value={category} onChange={setCategory} placeholder="e.g. Kitchen & Dining" />
-          </div>
+          <div><SectionLabel>Your Product *</SectionLabel><Input value={product} onChange={setProduct} placeholder="e.g. bamboo cutting board" /></div>
+          <div><SectionLabel>Category (optional)</SectionLabel><Input value={category} onChange={setCategory} placeholder="e.g. Kitchen & Dining" /></div>
         </div>
         <RunButton onClick={research} loading={loading} label="Research Keywords" color={T.purple} />
         {error && <div style={{ marginTop: 12, fontSize: 12, color: T.red, fontFamily: T.mono }}>{error}</div>}
@@ -459,13 +418,8 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
 
       {result && (
         <>
-          {/* Summary */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-            {[
-              ["Primary Keyword", result.primaryKeyword, T.accent],
-              ["Total Keywords", result.totalKeywords + " found", T.blue],
-              ["Buyer Intent", result.keywords.filter(k => k.intent === "Buyer").length + " keywords", T.green],
-            ].map(([label, value, color]) => (
+            {[["Primary Keyword", result.primaryKeyword, T.accent], ["Total Keywords", result.totalKeywords + " found", T.blue], ["Buyer Intent", (result.keywords.filter(k => k.intent === "Buyer").length) + " keywords", T.green]].map(([label, value, color]) => (
               <div key={label} style={{ background: T.card, border: `1px solid ${color}30`, borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono, marginBottom: 4 }}>{label}</div>
                 <div style={{ fontSize: 13, fontWeight: 800, color, fontFamily: T.mono }}>{value}</div>
@@ -473,19 +427,17 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
             ))}
           </div>
 
-          {/* Filter */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {["All", "Primary", "Secondary", "Long-tail"].map(f => (
               <button key={f} onClick={() => setFilter(f)} style={{ padding: "6px 14px", borderRadius: 7, border: `1px solid ${filter === f ? T.accent : T.border}`, background: filter === f ? T.accent + "18" : T.surface, color: filter === f ? T.accent : T.muted, cursor: "pointer", fontSize: 12, fontWeight: 700, fontFamily: T.mono }}>
-                {f} {f === "All" ? `(${result.keywords.length})` : `(${result.keywords.filter(k => k.priority === f).length})`}
+                {f} ({f === "All" ? result.keywords.length : result.keywords.filter(k => k.priority === f).length})
               </button>
             ))}
           </div>
 
-          {/* Keywords table */}
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 80px 90px", gap: 8 }}>
-              {["Keyword", "Est. Volume/mo", "Comp.", "Intent", "Priority", "PPC Bid"].map(h => (
+              {["Keyword", "Vol/Month", "Comp.", "Intent", "Priority", "PPC Bid"].map(h => (
                 <div key={h} style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono }}>{h}</div>
               ))}
             </div>
@@ -504,9 +456,8 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
             ))}
           </Card>
 
-          {/* Negative keywords */}
           <Card>
-            <SectionLabel>Negative Keywords (Add to PPC to save ad spend)</SectionLabel>
+            <SectionLabel>Negative Keywords — Add these to PPC to save ad spend</SectionLabel>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {result.negativeKeywords.map((k, i) => (
                 <span key={i} style={{ fontSize: 12, fontFamily: T.mono, background: T.red + "15", color: T.red, padding: "4px 10px", borderRadius: 6, border: `1px solid ${T.red}30` }}>−{k}</span>
@@ -514,7 +465,6 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
             </div>
           </Card>
 
-          {/* PPC Strategy */}
           <Card style={{ border: `1px solid ${T.purple}30`, background: T.purple + "08" }}>
             <div style={{ fontSize: 11, color: T.purple, fontFamily: T.mono, fontWeight: 700, marginBottom: 8 }}>🎯 PPC LAUNCH STRATEGY</div>
             <div style={{ fontSize: 13, color: T.text, lineHeight: 1.7 }}>{result.ppcStrategy}</div>
@@ -526,7 +476,7 @@ Include exactly 20 keywords covering primary, secondary, and long-tail variation
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAIN EXPORT — AI TOOLS TAB CONTAINER
+// MAIN EXPORT
 // ═══════════════════════════════════════════════════════════════════════════
 const AI_TOOLS = [
   { id: "analyzer", icon: "🧠", label: "Product Analyzer", component: ProductAnalyzer },
@@ -540,7 +490,6 @@ export default function AITools() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      {/* AI tools sub-nav */}
       <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 12, padding: 6, display: "flex", gap: 4 }}>
         {AI_TOOLS.map(t => (
           <button key={t.id} onClick={() => setActiveTool(t.id)} style={{
@@ -553,8 +502,6 @@ export default function AITools() {
           }}>{t.icon} {t.label}</button>
         ))}
       </div>
-
-      {/* Active tool */}
       {ActiveComponent && <ActiveComponent />}
     </div>
   );
