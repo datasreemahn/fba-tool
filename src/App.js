@@ -1,3 +1,4 @@
+import AITools from "./AITools";
 import { useState, useEffect } from "react";
 import { db } from "./firebase";
 import {
@@ -584,6 +585,7 @@ const TABS = [
   { id: "keyword", icon: "🔑", label: "Keywords" },
   { id: "inventory", icon: "📦", label: "Inventory" },
   { id: "launch", icon: "🚀", label: "Launch" },
+  { id: "ai", icon: "✦", label: "AI Tools" }
 ];
 
 export default function App() {
@@ -619,6 +621,7 @@ export default function App() {
         {tab === "keyword" && <KeywordTab />}
         {tab === "inventory" && <InventoryTab />}
         {tab === "launch" && <LaunchTab />}
+	{tab === "ai" && <AITools />}
       </div>
     </div>
   );
