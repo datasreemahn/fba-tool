@@ -45,21 +45,26 @@ const Badge = ({ children, color = T.accent }) => (
 
 // ── Gemini API call ──────────────────────────────────────────────────────────
 async function callGemini(prompt) {
-  const key = process.env.REACT_APP_GEMINI_KEY;
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+  const apiKey = process.env.REACT_APP_GEMINI_KEY;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 2048,
+      },
     }),
   });
+
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || "API error");
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  if (!response.ok) throw new Error(data?.error?.message || "Gemini API error");
+  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "";
   // Strip markdown code fences if present
-  return text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+  return text.replace(/```json|```/g, "").trim();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -77,7 +82,7 @@ function ProductAnalyzer() {
     setLoading(true); setError(""); setResult(null);
     try {
       const prompt = `You are an expert Amazon FBA product research analyst.
-Analyze this product idea for Amazon FBA viability and return ONLY a valid JSON object with no markdown, no backticks, no explanation.
+Analyze this product idea for Amazon FBA viability and return ONLY a valid JSON object with no markdown, no backticks, no explanation whatsoever.
 
 Product idea: "${idea}"
 Budget: ${budget}
@@ -90,8 +95,8 @@ Return exactly this JSON structure:
   "estimatedMargin": <string like "22–30%">,
   "competitionLevel": <"Low" or "Medium" or "High">,
   "demandLevel": <"Low" or "Medium" or "High">,
-  "pros": [<3-5 short strings>],
-  "cons": [<3-5 short strings>],
+  "pros": [<3 to 5 short strings>],
+  "cons": [<3 to 5 short strings>],
   "suggestedSellingPrice": <string like "$24.99–$34.99">,
   "estimatedCOGS": <string like "$5–$8">,
   "keyOpportunity": <one sentence>,
@@ -102,7 +107,7 @@ Return exactly this JSON structure:
       setResult(JSON.parse(raw));
     } catch (e) {
       console.error(e);
-      setError("Analysis failed: " + e.message);
+      setError("Analysis failed: " + (e.message || "Please try again."));
     }
     setLoading(false);
   };
@@ -117,7 +122,7 @@ Return exactly this JSON structure:
           <div style={{ width: 36, height: 36, background: T.accent + "22", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18 }}>🧠</div>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: T.text }}>Product Idea Analyzer</div>
-            <div style={{ fontSize: 12, color: T.muted, fontFamily: T.mono }}>AI scores your idea against FBA criteria</div>
+            <div style={{ fontSize: 12, color: T.muted, fontFamily: T.mono }}>AI scores your idea against 12 FBA criteria</div>
           </div>
         </div>
         <SectionLabel>Your Product Idea</SectionLabel>
@@ -129,7 +134,7 @@ Return exactly this JSON structure:
           ))}
         </div>
         <RunButton onClick={analyze} loading={loading} label="Analyze Product Idea" />
-        {error && <div style={{ marginTop: 12, fontSize: 12, color: T.red, fontFamily: T.mono, lineHeight: 1.5 }}>{error}</div>}
+        {error && <div style={{ marginTop: 12, fontSize: 12, color: T.red, fontFamily: T.mono }}>{error}</div>}
       </Card>
 
       {result && (
@@ -229,15 +234,15 @@ Return exactly this JSON structure:
   "title": <string, 150-200 chars, keyword-rich Amazon title>,
   "bullets": [<exactly 5 strings, each 150-200 chars, benefit-focused, starting with ALL CAPS keyword phrase>],
   "description": <string, 200-300 words, engaging product description>,
-  "backendKeywords": <string, comma-separated keywords not in title or bullets, under 250 bytes>,
-  "searchTerms": [<5-7 high-value search terms>],
+  "backendKeywords": <string, comma-separated keywords not used in title or bullets, under 250 bytes>,
+  "searchTerms": [<5-7 high-value search term strings>],
   "pricingInsight": <one sentence about pricing strategy>
 }`;
       const raw = await callGemini(prompt);
       setResult(JSON.parse(raw));
     } catch (e) {
       console.error(e);
-      setError("Generation failed: " + e.message);
+      setError("Generation failed: " + (e.message || "Please try again."));
     }
     setLoading(false);
   };
@@ -272,7 +277,7 @@ Return exactly this JSON structure:
         </div>
         <div style={{ marginBottom: 12 }}>
           <SectionLabel>Key Features / USPs</SectionLabel>
-          <Textarea value={form.features} onChange={v => set("features", v)} placeholder="e.g. extra thick, juice groove, non-slip feet, eco-friendly bamboo, comes with care guide" rows={3} />
+          <Textarea value={form.features} onChange={v => set("features", v)} placeholder="e.g. extra thick, juice groove, non-slip feet, eco-friendly bamboo" rows={3} />
         </div>
         <div style={{ marginBottom: 16 }}>
           <SectionLabel>Main Competitors (optional)</SectionLabel>
@@ -377,18 +382,18 @@ Return exactly this JSON structure with exactly 20 keywords:
       "intent": <"Buyer" or "Researcher" or "Browser">,
       "priority": <"Primary" or "Secondary" or "Long-tail">,
       "suggestedBid": <string like "$0.80–$1.20">,
-      "tip": <short actionable tip for this keyword>
+      "tip": <short actionable tip string>
     }
   ],
-  "negativeKeywords": [<6-8 strings to exclude from PPC>],
-  "ppcStrategy": <2-3 sentence PPC launch strategy>,
+  "negativeKeywords": [<6 to 8 strings to exclude from PPC>],
+  "ppcStrategy": <2-3 sentence PPC launch strategy string>,
   "totalKeywords": 20
 }`;
       const raw = await callGemini(prompt);
       setResult(JSON.parse(raw));
     } catch (e) {
       console.error(e);
-      setError("Research failed: " + e.message);
+      setError("Research failed: " + (e.message || "Please try again."));
     }
     setLoading(false);
   };
@@ -419,7 +424,7 @@ Return exactly this JSON structure with exactly 20 keywords:
       {result && (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
-            {[["Primary Keyword", result.primaryKeyword, T.accent], ["Total Keywords", result.totalKeywords + " found", T.blue], ["Buyer Intent", (result.keywords.filter(k => k.intent === "Buyer").length) + " keywords", T.green]].map(([label, value, color]) => (
+            {[["Primary Keyword", result.primaryKeyword, T.accent], ["Total Keywords", result.totalKeywords + " found", T.blue], ["Buyer Intent", result.keywords.filter(k => k.intent === "Buyer").length + " keywords", T.green]].map(([label, value, color]) => (
               <div key={label} style={{ background: T.card, border: `1px solid ${color}30`, borderRadius: 10, padding: "14px 16px" }}>
                 <div style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono, marginBottom: 4 }}>{label}</div>
                 <div style={{ fontSize: 13, fontWeight: 800, color, fontFamily: T.mono }}>{value}</div>
@@ -437,7 +442,7 @@ Return exactly this JSON structure with exactly 20 keywords:
 
           <Card style={{ padding: 0, overflow: "hidden" }}>
             <div style={{ padding: "12px 16px", borderBottom: `1px solid ${T.border}`, display: "grid", gridTemplateColumns: "2fr 1fr 80px 80px 80px 90px", gap: 8 }}>
-              {["Keyword", "Vol/Month", "Comp.", "Intent", "Priority", "PPC Bid"].map(h => (
+              {["Keyword", "Vol/mo", "Comp.", "Intent", "Priority", "PPC Bid"].map(h => (
                 <div key={h} style={{ fontSize: 10, color: T.muted, textTransform: "uppercase", letterSpacing: "0.08em", fontFamily: T.mono }}>{h}</div>
               ))}
             </div>
